@@ -5,63 +5,76 @@ import android.app.Activity;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.Manifest;
 import android.content.Context;
-import android.content.pm.PackageManager;
-import android.net.ConnectivityManager;
-import android.net.Network;
-import android.net.NetworkCapabilities;
-import android.net.wifi.WifiManager;
-import android.net.wifi.WifiInfo;
-import android.telephony.TelephonyManager;
-import android.telephony.PhoneStateListener;
-import android.telephony.SignalStrength;
-import android.telephony.CellSignalStrength;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.graphics.RectF;
+import android.graphics.Typeface;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.wifi.WifiInfo;
+import android.net.wifi.WifiManager;
+import android.net.DhcpInfo;
+import android.net.TrafficStats;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.*;
 
-import java.net.NetworkInterface;
 import java.net.InetAddress;
+import java.net.NetworkInterface;
+import java.net.Socket;
+import java.net.URL;
+import java.net.HttpURLConnection;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Locale;
 
 public class MainActivity extends Activity {
 
-    private final int BG = 0xFF080D12;
-    private final int PANEL = 0xFF101A22;
+    // THEME AURORA X
+    private final int BG = 0xFF080710;
+    private final int PANEL = 0xFF151020;
+    private final int PANEL2 = 0xFF201632;
+    private final int PURPLE = 0xFF9B5CFF;
+    private final int PURPLE_LIGHT = 0xFFBE91FF;
+    private final int WHITE = 0xFFF5F0FF;
+    private final int GREY = 0xFF9A91AA;
+    private final int GREEN = 0xFF65F5B2;
+    private final int BLUE = 0xFF64C8FF;
+    private final int ORANGE = 0xFFFFB66E;
 
-    private final int GREEN = 0xFF00FF9C;
-    private final int BLUE = 0xFF00C8FF;
-    private final int AMBER = 0xFFFFB547;
-
-    private TextView connection;
-    private TextView ipText;
-    private TextView wifiText;
-    private TextView mobileText;
-    private TextView latencyText;
+    private LinearLayout root;
+    private LinearLayout page;
+    private TextView pageTitle;
     private TextView logText;
-
-    private LinearLayout content;
-
-    private Handler handler = new Handler(Looper.getMainLooper());
-
-    private long lastRx = -1;
-    private long lastTx = -1;
-    private long lastTime = 0;
 
     private GaugeView networkGauge;
     private GaugeView wifiGauge;
     private GaugeView mobileGauge;
 
-    private TelephonyManager telephonyManager;
-    private PhoneStateListener signalListener;
+    private TextView connectionText;
+    private TextView ipText;
+    private TextView wifiText;
+    private TextView mobileText;
+    private TextView latencyText;
+    private TextView trafficText;
 
-    private static final int PHONE_PERMISSION_CODE = 100;
+    private final Handler handler =
+            new Handler(Looper.getMainLooper());
 
-    // INITIALISATION
+    private long lastRx = -1;
+    private long lastTx = -1;
+    private long lastTime = 0;
+
+    private boolean autoRefresh = true;
+    private boolean testRunning = false;
+
+    private final ArrayList<String> history =
+            new ArrayList<>();
+
+    private String currentPage = "DASHBOARD";
+
     @Override
     protected void onCreate(Bundle state) {
         super.onCreate(state);
@@ -69,177 +82,307 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(BG);
 
-        buildUi();
+        buildMainLayout();
+        showPage("DASHBOARD");
     }
 
-    // REPRISE DE L'APPLICATION
     @Override
     protected void onResume() {
         super.onResume();
 
         handler.removeCallbacks(ticker);
-        refreshInfo();
-        handler.postDelayed(ticker, 1000);
 
-        startMobileMonitoring();
+        if (autoRefresh) {
+            refreshDashboard();
+            handler.postDelayed(ticker, 1000);
+        }
     }
 
-    // MISE EN ARRIERE-PLAN
     @Override
     protected void onPause() {
         handler.removeCallbacks(ticker);
-        stopMobileMonitoring();
-
         super.onPause();
     }
 
-    // CONSTRUCTION DE L'INTERFACE
-    private void buildUi() {
+    @Override
+    protected void onDestroy() {
+        handler.removeCallbacks(ticker);
+        super.onDestroy();
+    }
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setBackgroundColor(BG);
+    // INTERFACE PRINCIPALE
 
-        content = new LinearLayout(this);
-        content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(18), dp(18), dp(18), dp(24));
+    private void buildMainLayout() {
 
-        scroll.addView(content);
-        setContentView(scroll);
+        root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setBackgroundColor(BG);
 
-        TextView title = text("AURORA X", 30, GREEN, true);
-        content.addView(title);
+        setContentView(root);
 
-        content.addView(text(
-                "NETWORK OPERATIONS // ANDROID",
-                11, BLUE, true
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.VERTICAL);
+        header.setPadding(dp(18), dp(18), dp(18), dp(12));
+
+        TextView title = text(
+                "AURORA X",
+                28,
+                PURPLE_LIGHT,
+                true
+        );
+
+        header.addView(title);
+
+        header.addView(text(
+                "NETWORK INTELLIGENCE SYSTEM",
+                10,
+                GREY,
+                true
         ));
 
-        content.addView(space(16));
+        root.addView(header);
+
+        HorizontalScrollView menuScroll =
+                new HorizontalScrollView(this);
+
+        menuScroll.setHorizontalScrollBarEnabled(false);
 
         LinearLayout menu = new LinearLayout(this);
         menu.setOrientation(LinearLayout.HORIZONTAL);
+        menu.setPadding(dp(10), 0, dp(10), dp(8));
 
         String[] sections = {
-                "DASHBOARD",
+                "ACCUEIL",
                 "RESEAU",
                 "WI-FI",
-                "MOBILE",
-                "DIAGNOSTIC"
+                "SCANNER",
+                "DEBIT",
+                "DIAGNOSTIC",
+                "HISTORIQUE",
+                "PARAMETRES"
         };
 
-        for (String s : sections) {
+        String[] pages = {
+                "DASHBOARD",
+                "RESEAU",
+                "WIFI",
+                "SCANNER",
+                "DEBIT",
+                "DIAGNOSTIC",
+                "HISTORIQUE",
+                "PARAMETRES"
+        };
+
+        for (int i = 0; i < sections.length; i++) {
+
+            final String destination = pages[i];
 
             Button b = new Button(this);
-            b.setText(s);
+            b.setText(sections[i]);
             b.setTextSize(10);
-            b.setTextColor(GREEN);
+            b.setTextColor(PURPLE_LIGHT);
+            b.setAllCaps(false);
 
             b.setBackgroundTintList(
-                    android.content.res.ColorStateList.valueOf(PANEL)
+                    android.content.res.ColorStateList.valueOf(PANEL2)
             );
 
-            menu.addView(
-                    b,
-                    new LinearLayout.LayoutParams(-2, dp(44))
-            );
+            LinearLayout.LayoutParams params =
+                    new LinearLayout.LayoutParams(
+                            -2,
+                            dp(42)
+                    );
+
+            params.setMargins(dp(3), 0, dp(3), 0);
+
+            menu.addView(b, params);
 
             b.setOnClickListener(v ->
-                    log("Section sélectionnée : " + s)
+                    showPage(destination)
             );
         }
 
-        HorizontalScrollView hsv = new HorizontalScrollView(this);
-        hsv.addView(menu);
-        content.addView(hsv);
+        menuScroll.addView(menu);
+        root.addView(menuScroll);
 
-        content.addView(space(14));
+        View line = new View(this);
+        line.setBackgroundColor(0xFF38264F);
 
-        connection = text(
-                "CONNEXION : vérification...",
-                14, GREEN, true
+        root.addView(
+                line,
+                new LinearLayout.LayoutParams(-1, dp(1))
         );
 
-        content.addView(card(connection));
+        pageTitle = text(
+                "",
+                16,
+                PURPLE_LIGHT,
+                true
+        );
+
+        pageTitle.setPadding(
+                dp(18), dp(12), dp(18), dp(8)
+        );
+
+        root.addView(pageTitle);
+
+        ScrollView scroll = new ScrollView(this);
+
+        page = new LinearLayout(this);
+        page.setOrientation(LinearLayout.VERTICAL);
+        page.setPadding(
+                dp(16), dp(8), dp(16), dp(25)
+        );
+
+        scroll.addView(page);
+
+        root.addView(
+                scroll,
+                new LinearLayout.LayoutParams(
+                        -1, 0, 1
+                )
+        );
+    }
+
+    // NAVIGATION
+
+    private void showPage(String destination) {
+
+        currentPage = destination;
+
+        page.removeAllViews();
+
+        switch (destination) {
+
+            case "DASHBOARD":
+                pageTitle.setText("TABLEAU DE BORD");
+                buildDashboard();
+                break;
+
+            case "RESEAU":
+                pageTitle.setText("INFORMATIONS RESEAU");
+                buildNetworkPage();
+                break;
+
+            case "WIFI":
+                pageTitle.setText("ANALYSE WI-FI");
+                buildWifiPage();
+                break;
+
+            case "SCANNER":
+                pageTitle.setText("DECOUVERTE RESEAU");
+                buildScannerPage();
+                break;
+
+            case "DEBIT":
+                pageTitle.setText("TEST DE DEBIT");
+                buildSpeedPage();
+                break;
+
+            case "DIAGNOSTIC":
+                pageTitle.setText("DIAGNOSTIC SYSTEME");
+                buildDiagnosticPage();
+                break;
+
+            case "HISTORIQUE":
+                pageTitle.setText("HISTORIQUE");
+                buildHistoryPage();
+                break;
+
+            case "PARAMETRES":
+                pageTitle.setText("PARAMETRES");
+                buildSettingsPage();
+                break;
+        }
+    }
+
+    // TABLEAU DE BORD
+
+    private void buildDashboard() {
+
+        connectionText = text(
+                "CONNEXION : VERIFICATION...",
+                13, GREEN, true
+        );
+
+        addCard(connectionText);
 
         LinearLayout gauges = new LinearLayout(this);
         gauges.setOrientation(LinearLayout.HORIZONTAL);
 
-        networkGauge = new GaugeView(this, "DEBIT", "Mbps", GREEN);
-        wifiGauge = new GaugeView(this, "WI-FI", "dBm", BLUE);
-        mobileGauge = new GaugeView(this, "MOBILE", "dBm", AMBER);
+        networkGauge = new GaugeView(
+                this, "DEBIT", "Mbps", PURPLE
+        );
+
+        wifiGauge = new GaugeView(
+                this, "WI-FI", "dBm", BLUE
+        );
+
+        mobileGauge = new GaugeView(
+                this, "MOBILE", "dBm", ORANGE
+        );
 
         gauges.addView(
                 networkGauge,
-                new LinearLayout.LayoutParams(0, dp(160), 1)
+                new LinearLayout.LayoutParams(0, dp(155), 1)
         );
 
         gauges.addView(
                 wifiGauge,
-                new LinearLayout.LayoutParams(0, dp(160), 1)
+                new LinearLayout.LayoutParams(0, dp(155), 1)
         );
 
         gauges.addView(
                 mobileGauge,
-                new LinearLayout.LayoutParams(0, dp(160), 1)
+                new LinearLayout.LayoutParams(0, dp(155), 1)
         );
 
-        content.addView(gauges);
+        page.addView(gauges);
 
-        content.addView(space(8));
-        content.addView(section("INFORMATIONS RESEAU"));
+        addSection("INFORMATIONS EN DIRECT");
 
-        ipText = text("IP locale : —", 13, 0xFFE6F1F5, false);
-
-        wifiText = text(
-                "Wi-Fi : non connecté",
-                13, 0xFFE6F1F5, false
-        );
-
+        ipText = text("IP locale : —", 12, WHITE, false);
+        wifiText = text("Wi-Fi : —", 12, WHITE, false);
         mobileText = text(
-                "Mobile : en attente d'autorisation",
-                13, 0xFFE6F1F5, false
+                "Mobile : non disponible",
+                12, GREY, false
         );
 
-        latencyText = text(
-                "Latence : —",
-                13, 0xFFE6F1F5, false
+        latencyText = text("Latence : —", 12, WHITE, false);
+        trafficText = text("Trafic : —", 12, WHITE, false);
+
+        addCard(
+                ipText,
+                wifiText,
+                mobileText,
+                latencyText,
+                trafficText
         );
 
-        content.addView(
-                card(ipText, wifiText, mobileText, latencyText)
-        );
+        addSection("ACTIONS RAPIDES");
 
-        content.addView(section("OUTILS"));
+        addButton("ACTUALISER", this::refreshDashboard);
+        addButton("TEST DE LATENCE", this::testLatency);
+        addButton("ANALYSER LE WI-FI",
+                () -> showPage("WIFI"));
+        addButton("DIAGNOSTIC RESEAU",
+                () -> showPage("DIAGNOSTIC"));
 
-        addAction("ACTUALISER LES MESURES", this::refreshInfo);
-        addAction("TESTER LA LATENCE", this::testLatency);
-        addAction("DECOUVERTE DU RESEAU", this::discoverNote);
-        addAction("JOURNAL SYSTEME", () ->
-                log("AURORA X fonctionne.")
-        );
-
-        content.addView(section("JOURNAL"));
+        addSection("JOURNAL SYSTEME");
 
         logText = text(
-                "Initialisation terminée.",
+                "AURORA X initialisé.",
                 11, GREEN, false
         );
 
-        logText.setPadding(dp(12), dp(12), dp(12), dp(12));
-        logText.setBackgroundColor(0xFF05090D);
+        addCard(logText);
 
-        content.addView(logText);
-
-        content.addView(space(12));
-
-        content.addView(text(
-                "AURORA X 1.0 • Diagnostic réseau Android",
-                10, 0xFF8195A3, false
-        ));
+        refreshDashboard();
     }
 
-    // ACTUALISATION DES MESURES
-    private void refreshInfo() {
+    // ACTUALISATION
+
+    private void refreshDashboard() {
 
         try {
 
@@ -247,10 +390,12 @@ public class MainActivity extends Activity {
                     (ConnectivityManager)
                     getSystemService(CONNECTIVITY_SERVICE);
 
-            Network n = cm.getActiveNetwork();
+            Network network = cm.getActiveNetwork();
 
             NetworkCapabilities caps =
-                    n == null ? null : cm.getNetworkCapabilities(n);
+                    network == null
+                            ? null
+                            : cm.getNetworkCapabilities(network);
 
             boolean wifi = caps != null &&
                     caps.hasTransport(
@@ -262,14 +407,21 @@ public class MainActivity extends Activity {
                             NetworkCapabilities.TRANSPORT_CELLULAR
                     );
 
-            connection.setText(
-                    "CONNEXION : " +
-                    (wifi ? "WI-FI" :
-                    cellular ? "DONNEES MOBILES" :
-                    "AUTRE / HORS LIGNE")
-            );
+            if (connectionText != null) {
 
-            ipText.setText("IP locale : " + getLocalIp());
+                connectionText.setText(
+                        "CONNEXION : " +
+                        (wifi ? "WI-FI" :
+                        cellular ? "DONNEES MOBILES" :
+                        caps != null ? "AUTRE" : "HORS LIGNE")
+                );
+            }
+
+            String ip = getLocalIp();
+
+            if (ipText != null) {
+                ipText.setText("IP locale : " + ip);
+            }
 
             WifiManager wm =
                     (WifiManager) getApplicationContext()
@@ -278,250 +430,679 @@ public class MainActivity extends Activity {
             if (wifi && wm != null) {
 
                 WifiInfo info = wm.getConnectionInfo();
+
                 int rssi = info.getRssi();
 
-                wifiText.setText(
-                        "Wi-Fi : connecté • " + rssi + " dBm"
-                );
+                if (wifiGauge != null) {
+                    wifiGauge.setValue(
+                            rssi, -100, -30,
+                            String.valueOf(rssi)
+                    );
+                }
 
-                wifiGauge.setValue(
-                        rssi, -100, -30, String.valueOf(rssi)
-                );
+                if (wifiText != null) {
+                    wifiText.setText(
+                            "Wi-Fi : connecté • " + rssi + " dBm"
+                    );
+                }
 
             } else {
 
-                wifiText.setText("Wi-Fi : non connecté");
-                wifiGauge.setValue(0, 0, 100, "—");
+                if (wifiGauge != null) {
+                    wifiGauge.setValue(0, 0, 100, "—");
+                }
+
+                if (wifiText != null) {
+                    wifiText.setText("Wi-Fi : non connecté");
+                }
             }
 
             long now = System.currentTimeMillis();
 
-            long rx = android.net.TrafficStats.getTotalRxBytes();
-            long tx = android.net.TrafficStats.getTotalTxBytes();
+            long rx = TrafficStats.getTotalRxBytes();
+            long tx = TrafficStats.getTotalTxBytes();
 
-            if (lastTime > 0 && now > lastTime &&
+            if (rx >= 0 && tx >= 0 &&
+                    lastTime > 0 &&
+                    now > lastTime &&
                     lastRx >= 0 && lastTx >= 0) {
 
                 double mbps =
-                        ((rx - lastRx) + (tx - lastTx)) * 8.0 /
-                        ((now - lastTime) * 1000000.0);
+                        ((rx - lastRx) + (tx - lastTx)) *
+                        8.0 / ((now - lastTime) * 1000000.0);
 
-                networkGauge.setValue(
-                        (float) mbps,
-                        0,
-                        100,
-                        String.format(Locale.US, "%.2f", mbps)
-                );
+                if (networkGauge != null) {
+                    networkGauge.setValue(
+                            (float) mbps,
+                            0, 100,
+                            String.format(
+                                    Locale.US, "%.2f", mbps
+                            )
+                    );
+                }
 
-            } else {
-
-                networkGauge.setValue(0, 0, 100, "0.00");
+                if (trafficText != null) {
+                    trafficText.setText(
+                            String.format(
+                                    Locale.US,
+                                    "Trafic instantané : %.2f Mbps",
+                                    mbps
+                            )
+                    );
+                }
             }
 
             lastRx = rx;
             lastTx = tx;
             lastTime = now;
 
+            if (mobileGauge != null) {
+                mobileGauge.setValue(0, 0, 100, "N/D");
+            }
+
         } catch (Exception e) {
-            log("Erreur de mesure : " + e.getMessage());
+            addLog("Erreur : " + e.getMessage());
         }
     }
 
-    // SURVEILLANCE DU SIGNAL MOBILE
-    private void startMobileMonitoring() {
+    // PAGE RESEAU
 
-        if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE)
-                != PackageManager.PERMISSION_GRANTED) {
+    private void buildNetworkPage() {
 
-            mobileText.setText(
-                    "Mobile : autorisation nécessaire"
-            );
+        addSection("ADRESSES");
 
-            requestPermissions(
-                    new String[]{
-                            Manifest.permission.READ_PHONE_STATE
-                    },
-                    PHONE_PERMISSION_CODE
-            );
+        addInfo("Adresse IP locale", getLocalIp());
+        addInfo("Passerelle", getGateway());
+        addInfo("Nom du réseau", getNetworkType());
 
+        addSection("COMPTEURS");
+
+        addInfo(
+                "Données reçues",
+                formatBytes(TrafficStats.getTotalRxBytes())
+        );
+
+        addInfo(
+                "Données envoyées",
+                formatBytes(TrafficStats.getTotalTxBytes())
+        );
+
+        addSection("TEST");
+
+        addButton("VERIFIER LA CONNEXION",
+                this::testLatency);
+
+        addButton("ACTUALISER",
+                () -> showPage("RESEAU"));
+    }
+
+    // PAGE WI-FI
+
+    private void buildWifiPage() {
+
+        addSection("ANALYSE DU SIGNAL");
+
+        WifiManager wm =
+                (WifiManager) getApplicationContext()
+                .getSystemService(WIFI_SERVICE);
+
+        if (wm == null) {
+            addInfo("Wi-Fi", "Indisponible");
             return;
         }
 
-        try {
+        WifiInfo info = wm.getConnectionInfo();
 
-            telephonyManager = (TelephonyManager)
-                    getSystemService(TELEPHONY_SERVICE);
-
-            if (telephonyManager == null) {
-                mobileText.setText("Mobile : indisponible");
-                return;
-            }
-
-            signalListener = new PhoneStateListener() {
-
-                @Override
-                public void onSignalStrengthsChanged(
-                        SignalStrength signalStrength) {
-
-                    super.onSignalStrengthsChanged(signalStrength);
-
-                    int dbm = Integer.MAX_VALUE;
-
-                    for (CellSignalStrength cell :
-                            signalStrength.getCellSignalStrengths()) {
-
-                        if (cell.getDbm() != Integer.MAX_VALUE) {
-                            dbm = cell.getDbm();
-                            break;
-                        }
-                    }
-
-                    final int signal = dbm;
-
-                    runOnUiThread(() -> {
-
-                        if (signal != Integer.MAX_VALUE) {
-
-                            mobileGauge.setValue(
-                                    signal,
-                                    -120,
-                                    -60,
-                                    String.valueOf(signal)
-                            );
-
-                            mobileText.setText(
-                                    "Signal mobile : " + signal + " dBm"
-                            );
-
-                        } else {
-
-                            mobileText.setText(
-                                    "Signal mobile : indisponible"
-                            );
-                        }
-                    });
-                }
-            };
-
-            telephonyManager.listen(
-                    signalListener,
-                    PhoneStateListener.LISTEN_SIGNAL_STRENGTHS
-            );
-
-            updateMobileNetworkType();
-
-            mobileText.setText(
-                    "Mobile : récupération du signal..."
-            );
-
-        } catch (SecurityException e) {
-
-            mobileText.setText(
-                    "Mobile : autorisation refusée"
-            );
-
-        } catch (Exception e) {
-
-            mobileText.setText(
-                    "Mobile : erreur de lecture"
-            );
-        }
-    }
-
-    // TYPE DE RESEAU
-    private void updateMobileNetworkType() {
-
-        try {
-
-            int type = telephonyManager.getDataNetworkType();
-
-            String name;
-
-            switch (type) {
-
-                case TelephonyManager.NETWORK_TYPE_NR:
-                    name = "5G";
-                    break;
-
-                case TelephonyManager.NETWORK_TYPE_LTE:
-                    name = "4G LTE";
-                    break;
-
-                case TelephonyManager.NETWORK_TYPE_HSPA:
-                case TelephonyManager.NETWORK_TYPE_HSPA_PLUS:
-                case TelephonyManager.NETWORK_TYPE_HSDPA:
-                case TelephonyManager.NETWORK_TYPE_HSUPA:
-                case TelephonyManager.NETWORK_TYPE_UMTS:
-                    name = "3G";
-                    break;
-
-                case TelephonyManager.NETWORK_TYPE_EDGE:
-                case TelephonyManager.NETWORK_TYPE_GPRS:
-                    name = "2G";
-                    break;
-
-                default:
-                    name = "Réseau inconnu";
-                    break;
-            }
-
-            mobileText.setText(
-                    "Réseau mobile : " + name + " • en attente du signal"
-            );
-
-        } catch (Exception e) {
-
-            mobileText.setText(
-                    "Réseau mobile : type indisponible"
-            );
-        }
-    }
-
-    // ARRET DE LA SURVEILLANCE
-    private void stopMobileMonitoring() {
-
-        if (telephonyManager != null &&
-                signalListener != null) {
-
-            telephonyManager.listen(
-                    signalListener,
-                    PhoneStateListener.LISTEN_NONE
-            );
-        }
-
-        signalListener = null;
-    }
-
-    // REPONSE A LA DEMANDE D'AUTORISATION
-    @Override
-    public void onRequestPermissionsResult(
-            int requestCode,
-            String[] permissions,
-            int[] grantResults) {
-
-        super.onRequestPermissionsResult(
-                requestCode,
-                permissions,
-                grantResults
+        addInfo(
+                "Etat",
+                info.getNetworkId() == -1
+                        ? "Non connecté"
+                        : "Connecté"
         );
 
-        if (requestCode == PHONE_PERMISSION_CODE) {
+        addInfo("Puissance", info.getRssi() + " dBm");
 
-            if (grantResults.length > 0 &&
-                    grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+        addInfo(
+                "Fréquence",
+                info.getFrequency() + " MHz"
+        );
 
-                startMobileMonitoring();
+        addInfo(
+                "Vitesse de liaison",
+                info.getLinkSpeed() + " Mbps"
+        );
 
-            } else {
+        addInfo(
+                "Adresse IP",
+                getLocalIp()
+        );
 
-                mobileText.setText(
-                        "Mobile : autorisation refusée"
-                );
-            }
+        addSection("INTERPRETATION");
+
+        int rssi = info.getRssi();
+
+        String quality;
+
+        if (rssi >= -55) {
+            quality = "Très bon signal";
+        } else if (rssi >= -67) {
+            quality = "Bon signal";
+        } else if (rssi >= -75) {
+            quality = "Signal moyen";
+        } else {
+            quality = "Signal faible";
         }
+
+        addInfo("Qualité estimée", quality);
+
+        addButton("ACTUALISER",
+                () -> showPage("WIFI"));
     }
 
-    // ADRESSE IP LOCALE
+    // PAGE SCANNER
+
+    private void buildScannerPage() {
+
+        addSection("RESEAU LOCAL");
+
+        addInfo("Adresse locale", getLocalIp());
+        addInfo("Passerelle", getGateway());
+        addInfo("Type de connexion", getNetworkType());
+
+        addSection("DECOUVERTE");
+
+        addText(
+                "Android limite l'accès aux appareils du réseau. " +
+                "Cette page affiche les informations locales " +
+                "accessibles sans autorisation supplémentaire."
+        );
+
+        addButton("ACTUALISER LES INFORMATIONS",
+                () -> showPage("SCANNER"));
+
+        addButton("TESTER LA CONNEXION",
+                this::testLatency);
+    }
+
+    // PAGE TEST DE DEBIT
+
+    private void buildSpeedPage() {
+
+        addSection("TEST INTERNET");
+
+        addText(
+                "Le test télécharge un fichier de mesure. " +
+                "Il utilise des données mobiles ou Wi-Fi selon " +
+                "la connexion active."
+        );
+
+        TextView result = text(
+                "Débit descendant : —",
+                16, PURPLE_LIGHT, true
+        );
+
+        addCard(result);
+
+        addButton("LANCER LE TEST",
+                () -> runSpeedTest(result));
+
+        addButton("TESTER LA LATENCE",
+                this::testLatency);
+    }
+
+    private void runSpeedTest(TextView result) {
+
+        if (testRunning) {
+            return;
+        }
+
+        testRunning = true;
+
+        result.setText("Test en cours...");
+
+        new Thread(() -> {
+
+            long start = System.nanoTime();
+            String message;
+
+            HttpURLConnection connection = null;
+
+            try {
+
+                URL url = new URL(
+                        "https://speed.cloudflare.com/__down?bytes=5000000"
+                );
+
+                connection =
+                        (HttpURLConnection) url.openConnection();
+
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(15000);
+                connection.setRequestMethod("GET");
+
+                connection.connect();
+
+                long total = 0;
+
+                byte[] buffer = new byte[8192];
+
+                try (java.io.InputStream input =
+                             connection.getInputStream()) {
+
+                    int count;
+
+                    while ((count = input.read(buffer)) != -1) {
+                        total += count;
+                    }
+                }
+
+                long elapsed =
+                        System.nanoTime() - start;
+
+                double seconds = elapsed / 1000000000.0;
+
+                double mbps =
+                        total * 8.0 / seconds / 1000000.0;
+
+                message = String.format(
+                        Locale.US,
+                        "Débit descendant : %.2f Mbps",
+                        mbps
+                );
+
+                history.add(message);
+
+            } catch (Exception e) {
+
+                message = "Test impossible : vérifie ta connexion.";
+            } finally {
+
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+
+            final String finalMessage = message;
+
+            runOnUiThread(() -> {
+
+                result.setText(finalMessage);
+                addLog(finalMessage);
+                testRunning = false;
+            });
+
+        }).start();
+    }
+
+    // PAGE DIAGNOSTIC
+
+    private void buildDiagnosticPage() {
+
+        addSection("CONTROLES");
+
+        addInfo("Connexion", getNetworkType());
+        addInfo("Adresse IP", getLocalIp());
+        addInfo("Passerelle", getGateway());
+
+        addSection("TESTS DISPONIBLES");
+
+        addButton("TESTER LA LATENCE",
+                this::testLatency);
+
+        addButton("VERIFIER LE DNS",
+                this::testDns);
+
+        addButton("ACTUALISER",
+                () -> showPage("DIAGNOSTIC"));
+    }
+
+    private void testDns() {
+
+        addText("Recherche DNS en cours...");
+
+        new Thread(() -> {
+
+            String result;
+
+            try {
+
+                InetAddress[] addresses =
+                        InetAddress.getAllByName("example.com");
+
+                result = "DNS opérationnel : " +
+                        addresses[0].getHostAddress();
+
+            } catch (Exception e) {
+
+                result = "Echec de la résolution DNS";
+            }
+
+            final String r = result;
+
+            runOnUiThread(() -> {
+                addText(r);
+                addLog(r);
+            });
+
+        }).start();
+    }
+
+    // TEST LATENCE TCP
+
+    private void testLatency() {
+
+        addLog("Test de latence lancé.");
+
+        if (latencyText != null) {
+            latencyText.setText("Latence : test en cours...");
+        }
+
+        new Thread(() -> {
+
+            long start = System.nanoTime();
+            String result;
+
+            try (Socket socket = new Socket()) {
+
+                socket.connect(
+                        new java.net.InetSocketAddress(
+                                "1.1.1.1", 443
+                        ),
+                        3000
+                );
+
+                long ms =
+                        (System.nanoTime() - start) / 1000000;
+
+                result = ms + " ms (connexion TCP)";
+
+                history.add("Latence : " + result);
+
+            } catch (Exception e) {
+
+                result = "Connexion impossible";
+            }
+
+            final String r = result;
+
+            runOnUiThread(() -> {
+
+                if (latencyText != null) {
+                    latencyText.setText("Latence : " + r);
+                }
+
+                addLog("Latence : " + r);
+            });
+
+        }).start();
+    }
+
+    // HISTORIQUE
+
+    private void buildHistoryPage() {
+
+        addSection("MESURES ENREGISTREES");
+
+        if (history.isEmpty()) {
+
+            addText("Aucune mesure enregistrée pour le moment.");
+
+        } else {
+
+            for (int i = history.size() - 1; i >= 0; i--) {
+                addText("> " + history.get(i));
+            }
+        }
+
+        addButton("EFFACER L'HISTORIQUE", () -> {
+
+            history.clear();
+            showPage("HISTORIQUE");
+        });
+    }
+
+    // PARAMETRES
+
+    private void buildSettingsPage() {
+
+        addSection("ACTUALISATION");
+
+        addInfo(
+                "Fréquence",
+                "Toutes les secondes lorsque l'application est ouverte"
+        );
+
+        Switch refreshSwitch = new Switch(this);
+
+        refreshSwitch.setText(
+                "Actualisation automatique"
+        );
+
+        refreshSwitch.setTextColor(WHITE);
+        refreshSwitch.setChecked(autoRefresh);
+
+        page.addView(refreshSwitch);
+
+        refreshSwitch.setOnCheckedChangeListener(
+                (button, checked) -> {
+
+                    autoRefresh = checked;
+
+                    handler.removeCallbacks(ticker);
+
+                    if (checked && !isFinishing()) {
+                        refreshDashboard();
+                        handler.postDelayed(ticker, 1000);
+                    }
+
+                    addLog(
+                            checked
+                                    ? "Actualisation activée"
+                                    : "Actualisation désactivée"
+                    );
+                }
+        );
+
+        addSection("APPLICATION");
+
+        addInfo("Nom", "AURORA X");
+        addInfo("Version", "2.0");
+        addInfo("Interface", "Dark / Deep Purple");
+        addInfo("Système", "Android");
+
+        addSection("INFORMATIONS");
+
+        addText(
+                "Certaines données mobiles peuvent être " +
+                "indisponibles selon les restrictions Android."
+        );
+    }
+
+    // OUTILS D'INTERFACE
+
+    private void addSection(String title) {
+
+        TextView t = text(
+                "◆ " + title,
+                13,
+                PURPLE_LIGHT,
+                true
+        );
+
+        t.setPadding(0, dp(15), 0, dp(9));
+
+        page.addView(t);
+    }
+
+    private void addInfo(String label, String value) {
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(dp(12), dp(10), dp(12), dp(10));
+        row.setBackgroundColor(PANEL);
+
+        TextView a = text(
+                label,
+                10,
+                GREY,
+                false
+        );
+
+        TextView b = text(
+                value,
+                13,
+                WHITE,
+                true
+        );
+
+        row.addView(a);
+        row.addView(b);
+
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(-1, -2);
+
+        params.setMargins(0, dp(3), 0, dp(3));
+
+        page.addView(row, params);
+    }
+
+    private void addText(String value) {
+
+        TextView t = text(
+                value,
+                12,
+                WHITE,
+                false
+        );
+
+        t.setPadding(
+                dp(12), dp(10), dp(12), dp(10)
+        );
+
+        t.setBackgroundColor(PANEL);
+
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(-1, -2);
+
+        params.setMargins(0, dp(3), 0, dp(3));
+
+        page.addView(t, params);
+    }
+
+    private void addCard(View... views) {
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(dp(12), dp(12), dp(12), dp(12));
+        box.setBackgroundColor(PANEL);
+
+        for (View v : views) {
+            box.addView(v);
+        }
+
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(-1, -2);
+
+        params.setMargins(0, dp(4), 0, dp(5));
+
+        page.addView(box, params);
+    }
+
+    private void addButton(String label, Runnable action) {
+
+        Button b = new Button(this);
+
+        b.setText(label);
+        b.setTextSize(11);
+        b.setTextColor(PURPLE_LIGHT);
+        b.setAllCaps(false);
+
+        b.setBackgroundTintList(
+                android.content.res.ColorStateList.valueOf(PANEL2)
+        );
+
+        b.setOnClickListener(v -> action.run());
+
+        LinearLayout.LayoutParams params =
+                new LinearLayout.LayoutParams(-1, dp(49));
+
+        params.setMargins(0, dp(4), 0, dp(4));
+
+        page.addView(b, params);
+    }
+
+    private TextView text(
+            String value,
+            int size,
+            int color,
+            boolean bold
+    ) {
+
+        TextView t = new TextView(this);
+
+        t.setText(value);
+        t.setTextSize(size);
+        t.setTextColor(color);
+        t.setGravity(Gravity.CENTER_VERTICAL);
+
+        t.setTypeface(
+                Typeface.MONOSPACE,
+                bold ? Typeface.BOLD : Typeface.NORMAL
+        );
+
+        return t;
+    }
+
+    private int dp(int value) {
+
+        return (int) (
+                value *
+                getResources().getDisplayMetrics().density +
+                0.5f
+        );
+    }
+
+    // INFORMATIONS RESEAU
+
+    private String getNetworkType() {
+
+        try {
+
+            ConnectivityManager cm =
+                    (ConnectivityManager)
+                    getSystemService(CONNECTIVITY_SERVICE);
+
+            Network n = cm.getActiveNetwork();
+
+            NetworkCapabilities caps =
+                    n == null ? null :
+                    cm.getNetworkCapabilities(n);
+
+            if (caps == null) {
+                return "Hors ligne";
+            }
+
+            if (caps.hasTransport(
+                    NetworkCapabilities.TRANSPORT_WIFI)) {
+                return "Wi-Fi";
+            }
+
+            if (caps.hasTransport(
+                    NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                return "Données mobiles";
+            }
+
+            if (caps.hasTransport(
+                    NetworkCapabilities.TRANSPORT_ETHERNET)) {
+                return "Ethernet";
+            }
+
+        } catch (Exception ignored) {
+        }
+
+        return "Inconnu";
+    }
+
     private String getLocalIp() {
 
         try {
@@ -534,12 +1115,12 @@ public class MainActivity extends Activity {
                 for (java.net.InterfaceAddress ia :
                         ni.getInterfaceAddresses()) {
 
-                    InetAddress a = ia.getAddress();
+                    InetAddress address = ia.getAddress();
 
-                    if (!a.isLoopbackAddress() &&
-                            a instanceof java.net.Inet4Address) {
+                    if (!address.isLoopbackAddress() &&
+                            address instanceof java.net.Inet4Address) {
 
-                        return a.getHostAddress();
+                        return address.getHostAddress();
                     }
                 }
             }
@@ -547,293 +1128,213 @@ public class MainActivity extends Activity {
         } catch (Exception ignored) {
         }
 
-        return "indisponible";
+        return "Indisponible";
     }
 
-    // TEST DE LATENCE
-    private void testLatency() {
+    private String getGateway() {
 
-        latencyText.setText("Latence : test en cours...");
+        try {
 
-        new Thread(() -> {
+            WifiManager wm =
+                    (WifiManager) getApplicationContext()
+                    .getSystemService(WIFI_SERVICE);
 
-            long start = System.nanoTime();
-            String result;
+            DhcpInfo info = wm.getDhcpInfo();
 
-            try {
+            int ip = info.gateway;
 
-                boolean ok = InetAddress
-                        .getByName("1.1.1.1")
-                        .isReachable(2500);
+            return (ip & 0xFF) + "." +
+                    ((ip >> 8) & 0xFF) + "." +
+                    ((ip >> 16) & 0xFF) + "." +
+                    ((ip >> 24) & 0xFF);
 
-                long ms =
-                        (System.nanoTime() - start) / 1000000;
+        } catch (Exception e) {
 
-                result = ok
-                        ? ms + " ms"
-                        : "Pas de réponse (filtrage possible)";
-
-            } catch (Exception e) {
-
-                result = "Échec du test";
-            }
-
-            final String r = result;
-
-            runOnUiThread(() -> {
-
-                latencyText.setText("Latence : " + r);
-                log("Test de latence : " + r);
-            });
-
-        }).start();
+            return "Indisponible";
+        }
     }
 
-    // DECOUVERTE RESEAU
-    private void discoverNote() {
+    private String formatBytes(long bytes) {
 
-        new android.app.AlertDialog.Builder(this)
-
-                .setTitle("Découverte du réseau")
-
-                .setMessage(
-                        "La découverte des appareils dépend du réseau " +
-                        "et des protections Android et du routeur. " +
-                        "Le scan automatique sera ajouté dans une prochaine version."
-                )
-
-                .setPositiveButton("Compris", null)
-
-                .show();
-    }
-
-    // AJOUT DES BOUTONS
-    private void addAction(String label, Runnable action) {
-
-        Button b = new Button(this);
-
-        b.setText(label);
-        b.setTextColor(GREEN);
-        b.setTextSize(12);
-
-        b.setBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(PANEL)
-        );
-
-        b.setOnClickListener(v -> action.run());
-
-        content.addView(
-                b,
-                new LinearLayout.LayoutParams(-1, dp(50))
-        );
-    }
-
-    private TextView section(String s) {
-
-        TextView t = text("> " + s, 13, BLUE, true);
-
-        t.setPadding(0, dp(16), 0, dp(8));
-
-        return t;
-    }
-
-    private LinearLayout card(View... views) {
-
-        LinearLayout box = new LinearLayout(this);
-
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(12), dp(10), dp(12), dp(10));
-        box.setBackgroundColor(PANEL);
-
-        for (View v : views) {
-            box.addView(v);
+        if (bytes < 0) {
+            return "Indisponible";
         }
 
-        return box;
-    }
+        double mb = bytes / 1048576.0;
 
-    private TextView text(
-            String s,
-            int size,
-            int color,
-            boolean bold
-    ) {
-
-        TextView t = new TextView(this);
-
-        t.setText(s);
-        t.setTextSize(size);
-        t.setTextColor(color);
-
-        if (bold) {
-            t.setTypeface(
-                    android.graphics.Typeface.MONOSPACE,
-                    android.graphics.Typeface.BOLD
+        if (mb >= 1024) {
+            return String.format(
+                    Locale.US, "%.2f Go", mb / 1024
             );
-        } else {
-            t.setTypeface(android.graphics.Typeface.MONOSPACE);
         }
 
-        return t;
-    }
-
-    private View space(int h) {
-
-        View v = new View(this);
-
-        v.setLayoutParams(
-                new LinearLayout.LayoutParams(1, dp(h))
-        );
-
-        return v;
-    }
-
-    private int dp(int x) {
-
-        return (int) (
-                x * getResources().getDisplayMetrics().density + 0.5f
+        return String.format(
+                Locale.US, "%.2f Mo", mb
         );
     }
 
     // JOURNAL
-    private void log(String s) {
+
+    private void addLog(String message) {
 
         if (logText != null) {
-            logText.append("\n> " + s);
+            logText.append("\n> " + message);
         }
     }
 
-    // ACTUALISATION CHAQUE SECONDE
+    // ACTUALISATION AUTOMATIQUE
+
     private final Runnable ticker = new Runnable() {
 
         @Override
         public void run() {
 
-            refreshInfo();
+            if (!autoRefresh) {
+                return;
+            }
+
+            if ("DASHBOARD".equals(currentPage)) {
+                refreshDashboard();
+            }
 
             handler.postDelayed(this, 1000);
         }
     };
 
-    // FERMETURE
-    @Override
-    protected void onDestroy() {
+    // JAUGES CIRCULAIRES
 
-        handler.removeCallbacks(ticker);
-        stopMobileMonitoring();
-
-        super.onDestroy();
-    }
-
-    // COMPTEURS CIRCULAIRES
     class GaugeView extends View {
 
-        Paint p = new Paint(3);
+        private final Paint paint = new Paint(3);
+        private final RectF oval = new RectF();
 
-        String label;
-        String unit;
-        String valueText = "—";
+        private final String label;
+        private final String unit;
+        private final int color;
 
-        int color;
+        private float value = 0;
+        private float min = 0;
+        private float max = 100;
 
-        float value = 0;
-        float min = 0;
-        float max = 100;
-
-        RectF oval = new RectF();
+        private String valueText = "—";
 
         GaugeView(
-                Context c,
-                String l,
-                String u,
-                int col
+                Context context,
+                String label,
+                String unit,
+                int color
         ) {
 
-            super(c);
+            super(context);
 
-            label = l;
-            unit = u;
-            color = col;
+            this.label = label;
+            this.unit = unit;
+            this.color = color;
         }
 
         void setValue(
-                float v,
-                float mn,
-                float mx,
-                String txt
+                float value,
+                float min,
+                float max,
+                String text
         ) {
 
-            value = v;
-            min = mn;
-            max = mx;
-            valueText = txt;
+            this.value = value;
+            this.min = min;
+            this.max = max;
+            this.valueText = text;
 
             invalidate();
         }
 
         @Override
-        protected void onDraw(Canvas c) {
+        protected void onDraw(Canvas canvas) {
 
-            super.onDraw(c);
+            super.onDraw(canvas);
 
-            float w = getWidth();
-            float h = getHeight();
+            float width = getWidth();
+            float height = getHeight();
 
-            float cx = w / 2;
-            float cy = h * 0.65f;
+            float cx = width / 2;
+            float cy = height * 0.65f;
 
-            float r = Math.min(w * 0.39f, h * 0.48f);
-
-            p.setStyle(Paint.Style.STROKE);
-            p.setStrokeWidth(dp(9));
-            p.setStrokeCap(Paint.Cap.ROUND);
-
-            p.setColor(0xFF263844);
-
-            oval.set(
-                    cx - r,
-                    cy - r,
-                    cx + r,
-                    cy + r
+            float radius = Math.min(
+                    width * 0.38f,
+                    height * 0.47f
             );
 
-            c.drawArc(oval, 135, 270, false, p);
+            oval.set(
+                    cx - radius,
+                    cy - radius,
+                    cx + radius,
+                    cy + radius
+            );
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(8));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            paint.setColor(0xFF30243F);
+
+            canvas.drawArc(
+                    oval,
+                    135,
+                    270,
+                    false,
+                    paint
+            );
 
             float fraction = max > min
                     ? Math.max(
                             0,
-                            Math.min(1, (value - min) / (max - min))
+                            Math.min(
+                                    1,
+                                    (value - min) / (max - min)
+                            )
                     )
                     : 0;
 
-            p.setColor(color);
+            paint.setColor(color);
 
-            c.drawArc(
+            canvas.drawArc(
                     oval,
                     135,
                     270 * fraction,
                     false,
-                    p
+                    paint
             );
 
-            p.setStyle(Paint.Style.FILL);
-            p.setColor(color);
-            p.setTextAlign(Paint.Align.CENTER);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setColor(color);
+            paint.setTypeface(Typeface.DEFAULT_BOLD);
+            paint.setTextSize(dp(10));
 
-            p.setTextSize(dp(11));
+            canvas.drawText(
+                    label,
+                    cx,
+                    dp(16),
+                    paint
+            );
 
-            c.drawText(label, cx, dp(18), p);
+            paint.setTextSize(dp(17));
 
-            p.setTextSize(dp(20));
-            p.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            canvas.drawText(
+                    valueText,
+                    cx,
+                    cy + dp(5),
+                    paint
+            );
 
-            c.drawText(valueText, cx, cy + dp(4), p);
+            paint.setTextSize(dp(9));
+            paint.setTypeface(Typeface.DEFAULT);
+            paint.setColor(GREY);
 
-            p.setTextSize(dp(9));
-            p.setTypeface(android.graphics.Typeface.DEFAULT);
-
-            c.drawText(unit, cx, cy + dp(21), p);
+            canvas.drawText(
+                    unit,
+                    cx,
+                    cy + dp(22),
+                    paint
+            );
         }
     }
 }
- 
