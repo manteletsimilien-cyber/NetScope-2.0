@@ -110,6 +110,73 @@ private static final int PHONE_PERMISSION_CODE = 100;
         content.addView(text("NetScope 1.0 • Les mesures dépendent des autorisations Android.", 10, 0xFF8195A3, false));
     }
 
+    private void startMobileMonitoring() {
+
+    if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE)
+            != PackageManager.PERMISSION_GRANTED) {
+
+        requestPermissions(
+                new String[]{Manifest.permission.READ_PHONE_STATE},
+                PHONE_PERMISSION_CODE
+        );
+
+        return;
+    }
+
+    telephonyManager = (TelephonyManager)
+            getSystemService(TELEPHONY_SERVICE);
+
+    if (telephonyManager == null) return;
+
+    signalListener = new PhoneStateListener() {
+
+        @Override
+        public void onSignalStrengthsChanged(
+                SignalStrength signalStrength) {
+
+            super.onSignalStrengthsChanged(signalStrength);
+
+            int dbm = Integer.MAX_VALUE;
+
+            for (CellSignalStrength cell :
+                    signalStrength.getCellSignalStrengths()) {
+
+                if (cell.getDbm() != Integer.MAX_VALUE) {
+                    dbm = cell.getDbm();
+                    break;
+                }
+            }
+
+            final int signal = dbm;
+
+            runOnUiThread(() -> {
+
+                if (signal != Integer.MAX_VALUE) {
+
+                    mobileGauge.setValue(
+                            signal, -120, -60, signal + ""
+                    );
+
+                    mobileText.setText(
+                            "Signal mobile : " + signal + " dBm"
+                    );
+
+                } else {
+
+                    mobileText.setText(
+                            "Signal mobile : indisponible"
+                    );
+                }
+            });
+        }
+    };
+
+    telephonyManager.listen(
+            signalListener,
+            PhoneStateListener.LISTEN_SIGNAL_STRENGTHS
+    );
+    }
+
     private void refreshInfo() {
         try {
             ConnectivityManager cm = (ConnectivityManager)getSystemService(CONNECTIVITY_SERVICE);
