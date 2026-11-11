@@ -30,6 +30,9 @@ public class MainActivity extends Activity {
     private long lastRx = -1, lastTx = -1;
     private long lastTime = 0;
     private GaugeView networkGauge, wifiGauge, mobileGauge;
+    private TelephonyManager telephonyManager;
+private PhoneStateListener signalListener;
+private static final int PHONE_PERMISSION_CODE = 100;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
